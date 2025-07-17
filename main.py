@@ -2,30 +2,74 @@
 
 import re
 from pathlib import Path
-
+from bidi.algorithm import get_display
 import pdfplumber
 import fitz      # PyMuPDF fallback
 import docx
+from pdfminer.high_level import extract_text
 import numpy as np
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 from sklearn.preprocessing import normalize
 import faiss
+import zipfile
+from tqdm import tqdm
+
+
+def extract_zips_in_data(data_dir: Path):
+    """Extract all .zip files in data_dir into subfolders."""
+    for zip_path in data_dir.rglob("*.zip"):
+        extract_dir = zip_path.with_suffix("")  # Remove .zip extension
+        extract_dir.mkdir(exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(extract_dir)
+        print(f"Extracted {zip_path} to {extract_dir}")
+
+
+def is_hebrew_or_arabic(char):
+    # Hebrew range: \u0590-\u05FF
+    # Arabic range: \u0600-\u06FF
+    return ('\u0590' <= char <= '\u05FF') or ('\u0600' <= char <= '\u06FF')
+
+def process_line_bidi(line):
+    # Apply BiDi algorithm only if line contains Hebrew or Arabic chars
+    if any(is_hebrew_or_arabic(ch) for ch in line):
+        # For Arabic, you may need reshaping:
+        # reshaped_text = arabic_reshaper.reshape(line)
+        # return get_display(reshaped_text)
+        return get_display(line)
+    else:
+        return line
+
+def remove_cid_artifacts(text):
+    return re.sub(r'\(cid:\d+\)', '', text)
+
+def process_text_bidi(text):
+    lines = text.splitlines()
+    processed_lines = [process_line_bidi(line) for line in lines]
+    return "\n".join(processed_lines)
 
 
 def read_pdf(path: Path) -> str:
     """Try pdfplumber first, then PyMuPDF if it fails."""
-    try:
+    raw_text = extract_text(path)
+    raw_text = remove_cid_artifacts(raw_text)
+    logical_text = process_text_bidi(raw_text)
+    #print(f"Path: {path}, Logical text: {logical_text}")
+    return logical_text
+
+    """try:
         text_pages = []
         with pdfplumber.open(path) as pdf:
             for page in pdf.pages:
                 t = page.extract_text()
                 if t:
                     text_pages.append(t)
+        print('text_pages', text_pages)
         return "\n\n".join(text_pages)
     except Exception:
         doc = fitz.open(str(path))
-        return "\n".join(p.get_text() for p in doc)
+        return "\n".join(p.get_text() for p in doc)"""
 
 
 def read_docx(path: Path) -> str:
@@ -35,12 +79,46 @@ def read_docx(path: Path) -> str:
 
 
 def clean_text(text: str) -> str:
-    """Keep Hebrew, Latin, digits, and basic punctuation; collapse whitespace."""
+    """
+    Keep Hebrew, Latin, digits, and basic punctuation; collapse whitespace and blank lines.
+    """
+    # Remove unwanted characters
     text = re.sub(r"[^\u0590-\u05FFa-zA-Z0-9\.\,\;\:\?\!\-\s]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    # Collapse multiple spaces/tabs into one space
+    text = re.sub(r"[ \t]+", " ", text)
+    # Collapse multiple newlines into a single newline
+    text = re.sub(r"\n+", "\n", text)
+    # Remove leading/trailing whitespace and blank lines
+    return text.strip()
 
 
 def chunk_text(
+    text: str,
+    min_words: int = 300,
+) -> list[str]:
+    """
+    Chunk text by paragraphs, each chunk has at least min_words.
+    """
+    text = clean_text(text)
+    paras = [p for p in text.split("\n\n") if p]
+    chunks = []
+    cur, count = [], 0
+    for p in paras:
+        words = p.split()
+        cur.append(p)
+        count += len(words)
+        if count >= min_words:
+            chunk = "\n\n".join(cur)
+            chunks.append(chunk)
+            cur, count = [], 0
+    # Add any remaining paragraphs as a final chunk if not empty
+    if cur:
+        chunk = "\n\n".join(cur)
+        if len(chunk.split()) >= min_words:
+            chunks.append(chunk)
+    return chunks
+
+def chunk_text_gefen(
     text: str,
     max_words: int,
     overlap: int,
@@ -62,6 +140,7 @@ def chunk_text(
         if count + len(words) > max_words and cur:
             chunk = " ".join(cur)
             if len(chunk.split()) >= min_words:
+                print(f"Appending chunk... {chunk}")
                 chunks.append(chunk)
             # carry overlap
             cur = cur[-overlap:]
@@ -118,28 +197,31 @@ def main():
     # ask user if no fixed QUERY
     if not QUERY:
         QUERY = input("Please enter your search query: ").strip()
-
+    extract_zips_in_data(DATA_DIR)
     print(f"[1/5] Loading model '{MODEL_NAME}'...")
     model = SentenceTransformer(MODEL_NAME)
 
     print("[2/5] Reading documents and creating chunks...")
     records = []
-    for path in DATA_DIR.rglob("*"):
-        if path.suffix.lower() == ".pdf":
-            text = read_pdf(path)
-        elif path.suffix.lower() == ".docx":
-            text = read_docx(path)
-        else:
-            continue
+    all_files = list(DATA_DIR.rglob("*"))
+    with tqdm(all_files, desc="Processing files") as pbar:
+        for path in pbar:
+            pbar.set_postfix_str(str(path))
+            if path.suffix.lower() == ".pdf":
+                text = read_pdf(path)
+            elif path.suffix.lower() == ".docx":
+                text = read_docx(path)
+            else:
+                continue
+            chunks = chunk_text(text, 300)
+            for i, c in enumerate(chunks):
+                records.append({
+                    "file": str(path),
+                    "chunk_id": i,
+                    "snippet": c[:200] + ("…" if len(c) > 200 else ""),
+                    "text": c
+                })
 
-        chunks = chunk_text(text, MAX_WORDS, OVERLAP, MIN_WORDS)
-        for i, c in enumerate(chunks):
-            records.append({
-                "file": str(path),
-                "chunk_id": i,
-                "snippet": c[:200] + ("…" if len(c) > 200 else ""),
-                "text": c
-            })
 
     df = pd.DataFrame(records)
     print(f"    → {len(df)} chunks created")
