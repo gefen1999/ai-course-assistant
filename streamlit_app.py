@@ -8,6 +8,8 @@ from openai import AzureOpenAI
 from pinecone import Pinecone
 import pathlib
 import time
+import json
+import re
 
 # API keys and configuration
 with open(r"../src/api_keys.json") as f:
@@ -24,8 +26,22 @@ deployment = api_keys["deployment"]
 subscription_key = api_keys["subscription_key"]
 api_version = api_keys["api_version"]
 
-st.set_page_config(page_title="AI Course Assistant", layout="wide")
-
+st.set_page_config(
+    page_title="Dasha - AI Course Assistant",
+    page_icon="streamlit_utils/dasha.jpeg",  # Path to your image file
+    layout="wide"
+)
+def display_answer(answer):
+    pattern = r"(\$\$.*?\$\$|\$.*?\$)"
+    segments = re.split(pattern, answer, flags=re.DOTALL)
+    for seg in segments:
+        seg = seg.strip()
+        if seg.startswith("$$") and seg.endswith("$$"):
+            st.latex(seg[2:-2].strip())
+        elif seg.startswith("$") and seg.endswith("$"):
+            st.latex(seg[1:-1].strip())
+        elif seg:
+            st.markdown(seg)
 # Custom CSS for Technion style
 st.markdown("""
     <style>
@@ -50,29 +66,42 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns([0.15, 0.7, 0.15])
-with col1:
-    st.image("faculty.png", width=150)
-with col3:
-    st.image("technion_logo.png", width=150)
+col1, col2 = st.columns([0.7, 0.15])
 
-st.title("AI Course Assistant")
-st.markdown(
-    "<span style='font-size:20px;'>"
-    "🔍 Welcome to the Data and Decision Sciences Faculty AI Course Assistant!<br>"
-    "Search and explore your faculty's OneDrive documents with smart AI-powered answers."
-    "</span>",
-    unsafe_allow_html=True
-)
+with col1:
+    st.image("streamlit_utils/DASHA HEADER.png",width = 300)
+with col2:
+    if st.button("💡 How To Use?"):
+        st.session_state["show_instructions"] = not st.session_state["show_instructions"]
+
+#st.title("AI Course Assistant")
+if "show_instructions" not in st.session_state:
+    st.session_state["show_instructions"] = False
+
+if st.session_state["show_instructions"]:
+    st.markdown(
+        "<div style='background-color:#f0f0f0;padding:16px;border-radius:10px;margin-bottom:10px;'>"
+        "<span style='font-size:16px;'>"
+        "👋 <b> Welcome to Dasha, your AI Course Assistant!</b><br>"
+        "To get started:<br>"
+        "1. <b>Select a course</b> from the sidebar.<br>"
+        "2. <b>Type your question</b> about the course material in the chat box below.<br>"
+        "3. Optionally, <b>add your own study material</b> using the sidebar.<br>"
+        "Dasha will answer your questions and help you study smarter!"
+        "</span>"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
 MODEL_NAME = "multi-qa-mpnet-base-dot-v1"
-PINECONE_INDEX_NAME = "dot-product"
+PINECONE_INDEX_NAME = "dotproduct"
 CHUNKING_OPTIONS = {
     "Recursive": "recursive",
     "Overlapping": "overlapping",
     "Spacy": "spacy"
 }
 
-CHUNK_SIZE = 1500
+CHUNK_SIZE = 1000
 OVERLAP = 200
 
 def get_courses_from_folder(folder_path="Eng_data"):
@@ -93,7 +122,7 @@ def generate_answer_azure(prompt, context, course, azure_endpoint, azure_key, de
         {
             "role": "system",
             "content": (
-                "You will receive:\n"
+                "You are Dasha, an academic helper agent. You will receive:\n"
                 "- A user question about study material.\n"
                 f"{course_prompt if course else ''}\n"
                 "- Up to three context chunks related to the question.\n\n"
@@ -101,8 +130,9 @@ def generate_answer_azure(prompt, context, course, azure_endpoint, azure_key, de
                 "1. Carefully read the question.\n"
                 "2. Use your own knowledge to answer.\n"
                 "3. Refer to the context chunks for supporting details or corrections.\n"
-                "4. If the context does not help answer the question, say so."
-                "5. Summarize the provided context at the end."
+                "4. If the provided context does not help answer the question, inform the user and recommend selecting a different course. "
+                #"5. Summarize the provided context at the end."
+                "5. If the answer contains formulas, use LaTeX delimiters in streamlit format ($...$ or $$...$$)."
             )
         },
         {
@@ -126,11 +156,17 @@ def setup():
     return model, pc
 
 model, pc = setup()
-
+st.markdown("""
+    <style>
+    .stChatMessageContent {
+        font-size: 1.25rem !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 with st.sidebar:
     st.header("Settings")
-    courses = ['Search in all documents']
-    courses.extend(get_courses_from_folder())
+    courses = get_courses_from_folder()
+    courses.append('Search in all documents')
     selected_course = st.selectbox("Choose a course:", courses)
     chunking_choice = st.selectbox("Choose chunking method:", list(CHUNKING_OPTIONS.keys()))
     chunking_strategy = select_chunking_strategy(CHUNKING_OPTIONS[chunking_choice])
@@ -160,17 +196,37 @@ with st.sidebar:
                 st.success(f"Uploaded {len(chunks)} chunks to Pinecone.")
             else:
                 st.warning("Please enter some text to chunk.")
-
+    st.markdown("---")
+    first_message = {
+            "role": "assistant",
+            "content": (
+                "Hey you! I'm Dasha, your AI Course Assistant. "
+                "Ask me anything about your courses or study materials!"
+            )
+        }
+    if st.button("Clear Chat", key="clear_chat_btn"):
+        st.session_state["chat_history_all"] = [first_message]
+        st.rerun()
 
 
 # Single chat history for all courses
 if "chat_history_all" not in st.session_state:
     st.session_state["chat_history_all"] = []
+    # Add initial agent message
+    st.session_state["chat_history_all"].append(first_message)
 
 # Track previous selected course
 if "prev_selected_course" not in st.session_state:
     st.session_state.prev_selected_course = selected_course
-
+st.markdown("""
+    <style>
+    .stChatMessage .stChatAvatar img {
+        width: 96px !important;
+        height: 96px !important;
+        object-fit: contain;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 # Detect course change and add system message
 if selected_course != st.session_state.prev_selected_course:
     st.session_state["chat_history_all"].append({
@@ -207,24 +263,55 @@ if "course_warning_time" in st.session_state:
 
 # Display chat history
 for msg in st.session_state["chat_history_all"]:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    if msg["role"] == "assistant":
+        with st.chat_message("assistant", avatar="streamlit_utils/dasha.jpeg"):
+            st.markdown(msg["content"])
+    else:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
 # Chat input
+field_text = f"Ask about {selected_course}..."
+if selected_course == 'Search in all documents':
+    st.info("Searching across all documents. Responses may be less specific.")
+    field_text = f"Ask about any course..."
 prompt = st.chat_input(f"Ask about {selected_course}...")
+st.markdown(
+    """
+    <div class='dasha-footer'>
+        Dasha is powered by GPT-4.1
+    </div>
+    <style>
+    .dasha-footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 100vw;
+        background: #fff;
+        text-align: center;
+        color: #888;
+        font-size: 0.95rem;
+        font-weight: 500;
+        z-index: 9999;
+        padding: 8px 0 8px 0;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 if prompt:
     st.session_state["chat_history_all"].append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-    with st.spinner("AI is thinking..."):
+    with st.spinner("Dasha is thinking..."):
         query_emb = embed_query(prompt, model)
-        filter = None
+        search_filter = None
         if selected_course != 'Search in all documents':
             relevant = [selected_course]
             if text_input:
                 relevant.append('user_input')
-            filter = {"file": {"$in": relevant}}
-        results = search_pinecone(query_emb, pc, PINECONE_INDEX_NAME, namespace, top_k=3, filter=filter)
+            search_filter = {"file": {"$in": relevant}}
+        results = search_pinecone(query_emb, pc, PINECONE_INDEX_NAME, namespace, top_k=3, filter=search_filter)
         context = "\n\n".join([r["metadata"]["text"] for r in results]) if results else ''
         answer = generate_answer_azure(
             prompt,
@@ -234,5 +321,5 @@ if prompt:
             azure_key=subscription_key,
             deployment_name=deployment)
     st.session_state["chat_history_all"].append({"role": "assistant", "content": answer})
-    with st.chat_message("assistant", avatar="technion_logo.png"):
+    with st.chat_message("assistant", avatar="streamlit_utils/dasha.jpeg"):
         st.markdown(answer)
