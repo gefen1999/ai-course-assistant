@@ -1,5 +1,7 @@
 # DASHA: Data-driven Academic Smart Helper Assistant
 ![DASHA](https://i.ibb.co/NdZFwskX/HEADER.png)
+
+## Overview
 Dasha is an intelligent assistant designed to help students interact with course materials more efficiently.
 By leveraging advanced language models and semantic search, Dasha enables users to ask questions about course content and receive accurate, context-aware answers. The motivation behind Dasha is to streamline the learning process, making it easier to find relevant information, clarify concepts, and enhance the overall educational experience.
 
@@ -48,7 +50,7 @@ By leveraging advanced language models and semantic search, Dasha enables users 
 - "Which additional literature is recommended for this course?"
 - "List the main topics covered in the syllabus"
 
-**Course-specific queries: **
+**Course-specific queries:**
 
     Algebraic Methods: 
     - "Explain SVD and it's usages in Data Science."
