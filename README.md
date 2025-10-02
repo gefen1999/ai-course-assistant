@@ -1,5 +1,5 @@
 # DASHA: Data-driven Academic Smart Helper Assistant
-![DASHA](streamlit_utils/HEADER6.png)
+![DASHA](https://i.ibb.co/NdZFwskX/HEADER.png)
 Dasha is an intelligent assistant designed to help students interact with course materials more efficiently.
 By leveraging advanced language models and semantic search, Dasha enables users to ask questions about course content and receive accurate, context-aware answers. The motivation behind Dasha is to streamline the learning process, making it easier to find relevant information, clarify concepts, and enhance the overall educational experience.
 
@@ -14,7 +14,6 @@ By leveraging advanced language models and semantic search, Dasha enables users 
    pip install -r requirements.txt
    ```
 3. **Create the Pinecone index**
-
    Open and run the Jupyter notebook to create the Pinecone index:
    ```sh
    jupyter notebook indexing_ENG.ipynb
@@ -41,14 +40,15 @@ By leveraging advanced language models and semantic search, Dasha enables users 
 - The application relies on OpenAI's GPT-4.1 model. Ensure all required API credentials (deployment, version, etc.) are properly configured in your environment variables.
 
 ## Usage
-1. Choose a course on the sidebar menu. 
+1. **Choose a course on the sidebar menu.**
 
     You may also choose "Search in all documents", but this option may yield less accurate results.
-2. Example general queries (after choosing a course using the dropdown menu):
+2. **Example general queries you can ask:**
 - "Who teaches the course and what is the format of the exam?"
-- "What is a recommended literature for this course?"
+- "Which additional literature is recommended for this course?"
 - "List the main topics covered in the syllabus"
-Course-specific queries: 
+
+**Course-specific queries: **
 
     Algebraic Methods: 
     - "Explain SVD and it's usages in Data Science."
@@ -57,4 +57,5 @@ Course-specific queries:
     Introduction to AI:
     - "What are common applications of AI discussed in the course?"
     - "Explain shortly the difference between the types of Reinforcement Learning"
-3. Optionally, upload your own course materials (PDF or text).
+
+3. **Optionally, upload your own course materials (PDF or text).**
