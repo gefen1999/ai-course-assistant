@@ -1,10 +1,12 @@
-# DASHA: Data-driven Academic Smart Helper Assistant
+# DASHA: Data-driven Academic Smart Helper Agent
 ![DASHA](https://i.ibb.co/NdZFwskX/HEADER.png)
 
 ## Overview
-Dasha is an intelligent assistant designed to help students interact with course materials more efficiently.
-By leveraging advanced language models and semantic search, Dasha enables users to ask questions about course content and receive accurate, context-aware answers. The motivation behind Dasha is to streamline the learning process, making it easier to find relevant information, clarify concepts, and enhance the overall educational experience.
+Dasha is an intelligent RAG-based assistant designed to help students interact with course materials more efficiently.
 
+By leveraging advanced language models and semantic search, Dasha enables users to ask questions about course content and receive accurate, context-aware answers. 
+
+The goal of Dasha is to simplify the learning process by helping users quickly locate relevant information, clarify concepts, and improve their overall educational experience.
 ## Setup
 1. **Clone the repository**
 
