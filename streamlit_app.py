@@ -1,5 +1,5 @@
 import streamlit as st
-from rag_utils import load_api_keys, load_model, embed_query, search_pinecone, get_pinecone_client
+from rag_utils import load_api_keys, load_model, embed_query, search_pinecone, get_pinecone_client, read_pdf, read_docx
 from chunking import select_chunking_strategy
 import os
 import openai
@@ -10,24 +10,26 @@ import pathlib
 import time
 import json
 import re
+import base64
+import io
 
 # API keys and configuration
-with open(r"../src/api_keys.json") as f:
+with open(r"src/api_keys.json") as f:
     api_keys = json.load(f)
 
-params = ['endpoint', 'model_name', 'deployment', 'subscription_key', 'api_version']
+params = ['endpoint', 'deployment', 'subscription_key', 'api_version']
 for p in params:
     if p not in api_keys:
         raise ValueError(f"Missing '{p}' in api_keys.json")
 
 endpoint = api_keys["endpoint"]
-model_name = api_keys["model_name"]
+#model_name = api_keys["model_name"]
 deployment = api_keys["deployment"]
 subscription_key = api_keys["subscription_key"]
 api_version = api_keys["api_version"]
 
 st.set_page_config(
-    page_title="Dasha - AI Course Assistant",
+    page_title="Dasha - AI Academic Assistant",
     page_icon="streamlit_utils/dasha.jpeg",  # Path to your image file
     layout="wide"
 )
@@ -42,6 +44,7 @@ def display_answer(answer):
             st.latex(seg[1:-1].strip())
         elif seg:
             st.markdown(seg)
+
 # Custom CSS for Technion style
 st.markdown("""
     <style>
@@ -50,7 +53,7 @@ st.markdown("""
         font-family: 'Segoe UI', Arial, sans-serif;
     }
     .stButton>button {
-        background-color: #0033a0;
+        background-color: #02468b;
         color: white;
         border-radius: 8px;
         font-weight: bold;
@@ -66,15 +69,28 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-col1, col2 = st.columns([0.7, 0.15])
-
+col1, col2 = st.columns([0.8, 0.2])
 with col1:
-    st.image("streamlit_utils/DASHA HEADER.png",width = 300)
-with col2:
-    if st.button("💡 How To Use?"):
-        st.session_state["show_instructions"] = not st.session_state["show_instructions"]
+    st.image("streamlit_utils/HEADER6.png", width=750)  # Adjust width as needed
 
+with col2:
+    st.markdown(
+        """
+        <div style='display: flex; flex-direction: column; justify-content: center; height: 25px;'>
+            <div id='how-to-use-btn'></div>
+        </div>
+        <style>
+        [data-testid="column"]:nth-of-type(2) > div {
+            height: 50px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    if st.button("💡 How To Use?", key="how-to-use-btn"):
+        st.session_state["show_instructions"] = not st.session_state["show_instructions"]
 #st.title("AI Course Assistant")
+#st.title("Dasha Chat")
 if "show_instructions" not in st.session_state:
     st.session_state["show_instructions"] = False
 
@@ -82,7 +98,7 @@ if st.session_state["show_instructions"]:
     st.markdown(
         "<div style='background-color:#f0f0f0;padding:16px;border-radius:10px;margin-bottom:10px;'>"
         "<span style='font-size:16px;'>"
-        "👋 <b> Welcome to Dasha, your AI Course Assistant!</b><br>"
+        "👋 <b> Welcome to Dasha, Data-Driven Academic Smart Helper Agent!</b><br>"
         "To get started:<br>"
         "1. <b>Select a course</b> from the sidebar.<br>"
         "2. <b>Type your question</b> about the course material in the chat box below.<br>"
@@ -94,7 +110,7 @@ if st.session_state["show_instructions"]:
     )
 
 MODEL_NAME = "multi-qa-mpnet-base-dot-v1"
-PINECONE_INDEX_NAME = "dotproduct"
+PINECONE_INDEX_NAME = "dotproduct-300"
 CHUNKING_OPTIONS = {
     "Recursive": "recursive",
     "Overlapping": "overlapping",
@@ -152,7 +168,7 @@ def generate_answer_azure(prompt, context, course, azure_endpoint, azure_key, de
 def setup():
     api_keys = load_api_keys()
     model = load_model(MODEL_NAME)
-    pc = get_pinecone_client(api_keys["pinecone_anna"])
+    pc = get_pinecone_client(api_keys["pinecone"])
     return model, pc
 
 model, pc = setup()
@@ -170,40 +186,89 @@ with st.sidebar:
     selected_course = st.selectbox("Choose a course:", courses)
     chunking_choice = st.selectbox("Choose chunking method:", list(CHUNKING_OPTIONS.keys()))
     chunking_strategy = select_chunking_strategy(CHUNKING_OPTIONS[chunking_choice])
-    namespace = f"ENG-{CHUNKING_OPTIONS[chunking_choice]}"
+    namespace = f"{CHUNKING_OPTIONS[chunking_choice]}"
     st.markdown("---")
-    st.header("Add Your Material")
     if "show_text_input" not in st.session_state:
         st.session_state.show_text_input = False
-    if st.button("I want to add my own material", key="sidebar_add_material"):
+
+    # 1. Initialize status
+    if "upload_status" not in st.session_state:
+        st.session_state.upload_status = "idle"
+
+    button_label = "I don't want to add my own material" if st.session_state.show_text_input else "I want to add my own material"
+    if st.button(button_label, key="sidebar_add_material"):
         st.session_state.show_text_input = not st.session_state.show_text_input
+        st.rerun()  # Force immediate UI update
+
     text_input = ""
     if st.session_state.show_text_input:
-        text_input = st.text_area("Paste your document text here:", key="sidebar_text_area")
-        if st.button("Chunk Text", key="sidebar_chunk_text"):
-            if text_input:
-                chunks = chunking_strategy([text_input], CHUNK_SIZE, OVERLAP)
-                st.write(f"Generated {len(chunks)} chunks:")
-                st.write("Uploading chunks to Pinecone...")
-                vectors = []
-                for i, chunk in enumerate(chunks):
-                    emb = embed_query(chunk, model)
-                    vector_id = str(uuid.uuid4())
-                    metadata = {"text": chunk, "file": "user_input"}
-                    vectors.append({"id": vector_id, "values": emb.tolist(), "metadata": metadata})
-                index = pc.Index(PINECONE_INDEX_NAME)
-                index.upsert(vectors=vectors, namespace=namespace)
-                st.success(f"Uploaded {len(chunks)} chunks to Pinecone.")
+        uploaded_file = st.file_uploader("Upload PDF or DOCX file:", type=["pdf", "docx"])
+        if uploaded_file:
+            if uploaded_file.type == "application/pdf":
+                text_input = read_pdf(io.BytesIO(uploaded_file.read()))
+            elif uploaded_file.type in [
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/msword"
+            ]:
+                text_input = read_docx(io.BytesIO(uploaded_file.read()))
             else:
-                st.warning("Please enter some text to chunk.")
+                st.warning("Unsupported file type, only .pdf and .docx files are supported.")
+            st.text_area("Extracted text:", value=text_input[:2000], height=200, key="sidebar_text_area", disabled=True)
+        else:
+            text_input = st.text_area("Or paste your document text here:", key="sidebar_text_area")
+
+        # Use a unique key for the chunk button inside the text input block
+        if st.button("Upload to Knowledge Base", key="sidebar_chunk_text_inner"):
+            if text_input:
+                st.session_state.upload_status = "uploading"
+                st.rerun()
+
+        if st.session_state.upload_status == "uploading":
+            st.markdown(
+                "<div style='padding:10px; background:#e6f0fa; border-radius:8px; color:#02468b; font-weight:500;'>"
+                "⏳ Uploading chunks to Pinecone..."
+                "</div>",
+                unsafe_allow_html=True
+            )
+        elif st.session_state.upload_status == "done":
+            st.markdown(
+                "<div style='padding:10px; background:#e6f0fa; border-radius:8px; color:#02468b; font-weight:500;'>"
+                "✅ Uploaded chunks to Pinecone."
+                "</div>",
+                unsafe_allow_html=True
+            )
+
+        # 4. Actual upload logic (after rerun)
+        if st.session_state.upload_status == "uploading" and text_input:
+            chunks = chunking_strategy([text_input], CHUNK_SIZE, OVERLAP)
+            vectors = []
+            for i, chunk in enumerate(chunks):
+                emb = embed_query(chunk, model)
+                vector_id = str(uuid.uuid4())
+                metadata = {"text": chunk, "file": f"{selected_course}_user_input"}
+                vectors.append({"id": vector_id, "values": emb.tolist(), "metadata": metadata})
+            index = pc.Index(PINECONE_INDEX_NAME)
+            index.upsert(vectors=vectors, namespace=namespace)
+            st.session_state.upload_status = "done"
+            st.rerun()
+
     st.markdown("---")
+
     first_message = {
             "role": "assistant",
             "content": (
-                "Hey you! I'm Dasha, your AI Course Assistant. "
+                "Hey you! I'm Dasha, your AI Academic Assistant. "
                 "Ask me anything about your courses or study materials!"
             )
         }
+    st.markdown(
+        """
+        <div style='width:40%; margin:0 auto; display:flex; justify-content:center; align-items:center;'>
+            <div id='clear-chat-btn'></div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     if st.button("Clear Chat", key="clear_chat_btn"):
         st.session_state["chat_history_all"] = [first_message]
         st.rerun()
@@ -235,7 +300,14 @@ if selected_course != st.session_state.prev_selected_course:
     })
     st.session_state.prev_selected_course = selected_course
     st.session_state["show_course_warning"] = True
-    st.session_state.prev_selected_course = selected_course
+    # Reset user upload state
+    st.session_state.upload_status = "idle"
+    st.session_state.show_text_input = False
+
+    if "sidebar_text_area" in st.session_state:
+        del st.session_state["sidebar_text_area"]
+    st.rerun()
+
 else:
     st.session_state["show_course_warning"] = False
 
@@ -260,7 +332,6 @@ if "course_warning_time" in st.session_state:
         del st.session_state["course_warning_time"]
         st.rerun()
 
-
 # Display chat history
 for msg in st.session_state["chat_history_all"]:
     if msg["role"] == "assistant":
@@ -269,6 +340,8 @@ for msg in st.session_state["chat_history_all"]:
     else:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 # Chat input
 field_text = f"Ask about {selected_course}..."
@@ -309,7 +382,7 @@ if prompt:
         if selected_course != 'Search in all documents':
             relevant = [selected_course]
             if text_input:
-                relevant.append('user_input')
+                relevant.append(f'{selected_course}_user_input')
             search_filter = {"file": {"$in": relevant}}
         results = search_pinecone(query_emb, pc, PINECONE_INDEX_NAME, namespace, top_k=3, filter=search_filter)
         context = "\n\n".join([r["metadata"]["text"] for r in results]) if results else ''
@@ -323,3 +396,4 @@ if prompt:
     st.session_state["chat_history_all"].append({"role": "assistant", "content": answer})
     with st.chat_message("assistant", avatar="streamlit_utils/dasha.jpeg"):
         st.markdown(answer)
+
