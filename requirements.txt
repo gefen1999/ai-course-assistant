@@ -1,0 +1,11 @@
+streamlit
+openai
+pinecone
+faiss-cpu
+jupyter
+numpy
+pandas
+tqdm
+scikit-learn
+sentence-transformers
+langchain
