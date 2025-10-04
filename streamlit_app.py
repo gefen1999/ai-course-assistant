@@ -120,7 +120,7 @@ CHUNKING_OPTIONS = {
 CHUNK_SIZE = 1000
 OVERLAP = 200
 
-def get_courses_from_folder(folder_path="Eng_data"):
+def get_courses_from_folder(folder_path="dataset"):
     folder = pathlib.Path(folder_path)
     files = [f.stem for f in folder.glob("*") if f.is_file()]
     return sorted(files)
